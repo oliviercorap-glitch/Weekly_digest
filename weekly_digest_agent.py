@@ -65,12 +65,19 @@ REPORT_LANG = "en"
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 GITHUB_TOKEN = os.environ.get("GITHUB_REPORTS_TOKEN", "")  # optional, public repos work without it
 
-SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.office365.com")
-SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
-EMAIL_FROM = os.environ.get("EMAIL_FROM", SMTP_USERNAME)
 EMAIL_TO = os.environ.get("EMAIL_TO", "")  # comma-separated list of recipients
+
+# NOTE: GitHub Actions injects an EMPTY STRING (not an unset variable) for any
+# secret referenced in a workflow's `env:` block that hasn't been configured
+# in the repo settings. `os.environ.get(key, default)` only falls back to
+# `default` when the key is entirely absent, so it does NOT protect against
+# an empty string here -- hence the explicit `or` fallback below, which
+# treats "" the same as "not set".
+SMTP_HOST = os.environ.get("SMTP_HOST") or "smtp.office365.com"
+SMTP_PORT = int(os.environ.get("SMTP_PORT") or "587")
+EMAIL_FROM = os.environ.get("EMAIL_FROM") or SMTP_USERNAME
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
