@@ -210,15 +210,37 @@ def post_json(url: str, headers: dict, payload: dict, timeout: int = 90) -> Opti
 # ---------------------------------------------------------------------------
 
 def list_report_files(repo: str, reports_path: str) -> list[dict]:
-    url = f"https://api.github.com/repos/{repo}/contents/{reports_path}"
-    listing = github_get(url)
-    if listing is None:
-        logger.warning("Could not list '%s' in repo %s (missing repo/path or placeholder not replaced?)", reports_path, repo)
-        return []
-    if not isinstance(listing, list):
-        logger.warning("Unexpected contents API response for %s/%s", repo, reports_path)
-        return []
-    return [item for item in listing if item.get("type") == "file" and item.get("name", "").endswith(".html")]
+    """Tries the configured reports_path first, then a set of common
+    fallback locations, since not all agents in the suite necessarily use
+    the exact same folder convention. Returns as soon as a location with at
+    least one .html file is found."""
+    candidates = [reports_path] if reports_path else []
+    for fallback in ["reports", "Reports", "report", "output", "outputs", ""]:
+        if fallback not in candidates:
+            candidates.append(fallback)
+
+    tried_summary = []
+    for path in candidates:
+        url = f"https://api.github.com/repos/{repo}/contents/{path}" if path else f"https://api.github.com/repos/{repo}/contents"
+        listing = github_get(url)
+        if listing is None:
+            tried_summary.append(f"{path or '(root)'}: not found (404)")
+            continue
+        if not isinstance(listing, list):
+            tried_summary.append(f"{path or '(root)'}: not a directory")
+            continue
+        html_files = [item for item in listing if item.get("type") == "file" and item.get("name", "").endswith(".html")]
+        if html_files:
+            logger.info("Found %d html report(s) in %s/%s", len(html_files), repo, path or "(root)")
+            return html_files
+        tried_summary.append(f"{path or '(root)'}: directory exists but no .html files")
+
+    logger.warning(
+        "No HTML reports found in repo %s after trying: %s. "
+        "Check that the agent has run at least once and that its reports are committed to the repo.",
+        repo, "; ".join(tried_summary),
+    )
+    return []
 
 
 def fetch_file_content(repo: str, path: str) -> Optional[str]:
