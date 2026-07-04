@@ -109,28 +109,28 @@ logger = logging.getLogger("weekly_digest_agent")
 
 DEFAULT_SOURCE_REPOS = [
     {
-        "name": "GSE Aviation Competitive Intelligence",
-        "repo": "<owner>/<gse-aviation-agent-repo>",
+        "name": "GSE Aviation Competitive Intelligence (China)",
+        "repo": "oliviercorap-glitch/agent_aviation_industry_china",
+        "reports_path": "reports",
+    },
+    {
+        "name": "GSE Aviation Competitive Intelligence (APAC)",
+        "repo": "oliviercorap-glitch/agent_aviation_industry_APAC",
         "reports_path": "reports",
     },
     {
         "name": "China Economic Watch",
-        "repo": "<owner>/<china-eco-agent-repo>",
-        "reports_path": "reports",
-    },
-    {
-        "name": "APAC GSE Market Watch",
-        "repo": "<owner>/<apac-gse-agent-repo>",
+        "repo": "oliviercorap-glitch/China_eco_agent",
         "reports_path": "reports",
     },
     {
         "name": "China Tax & Corporate Law Watch",
-        "repo": "<owner>/china-tax-law-watch",
+        "repo": "oliviercorap-glitch/China_tax_law",
         "reports_path": "reports",
     },
     {
         "name": "APAC FX Risk Watch",
-        "repo": "<owner>/apac-fx-risk-watch",
+        "repo": "oliviercorap-glitch/APAC_FOREX",
         "reports_path": "reports",
     },
 ]
