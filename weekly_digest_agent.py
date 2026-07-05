@@ -535,6 +535,38 @@ def html_escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def trouver_lien(sig: dict, all_links: list[dict]) -> Optional[dict]:
+    """Find the source link that best matches a consolidated signal, so the
+    reader can click straight through to the original article from within
+    the signal card -- no need to scroll down to the appendix.
+
+    Matching is a simple word-overlap score between the signal's TITLE +
+    SUMMARY and each candidate link's label, restricted to links from the
+    same source agent when SOURCE_AGENT is populated (keeps matches
+    accurate when multiple agents cover a similar topic in the same week).
+    """
+    haystack = (sig.get("TITLE", "") + " " + sig.get("SUMMARY", "")).lower()
+    if not haystack.strip():
+        return None
+
+    source_agent = (sig.get("SOURCE_AGENT") or "").lower()
+    candidates = all_links
+    if source_agent:
+        narrowed = [l for l in all_links if l["source"].lower() in source_agent or source_agent in l["source"].lower()]
+        if narrowed:
+            candidates = narrowed
+
+    best_link, best_score = None, 0
+    for link in candidates:
+        words = [w for w in re.split(r"[\s\W]+", link["label"].lower()) if len(w) >= 4]
+        if not words:
+            continue
+        score = sum(1 for w in words if w in haystack)
+        if score > best_score:
+            best_score, best_link = score, link
+    return best_link if best_score >= 1 else None
+
+
 SIGNAL_ROW = """
 <tr>
   <td style="padding:0 0 14px 0;">
@@ -555,6 +587,7 @@ SIGNAL_ROW = """
               </td>
             </tr>
           </table>
+          {source_link_block}
         </td>
       </tr>
     </table>
@@ -572,7 +605,7 @@ LINK_APPENDIX_GROUP = """
 """
 
 
-def render_signals(signals: list[dict]) -> str:
+def render_signals(signals: list[dict], all_links: list[dict]) -> str:
     grouped = {impact: [] for impact in IMPACT_ORDER}
     for sig in signals:
         grouped.setdefault(sig.get("IMPACT", "INFO"), []).append(sig)
@@ -592,6 +625,20 @@ def render_signals(signals: list[dict]) -> str:
         parts.append('<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tbody>')
         for sig in items:
             category = sig.get("CATEGORY", "Other")
+            link = trouver_lien(sig, all_links)
+            if link:
+                label_esc = html_escape(link["label"])[:140]
+                source_link_block = (
+                    '<div style="padding-top:10px; margin-top:10px; border-top:1px dashed #e2e8f0; '
+                    'font-size:12px; display:flex; flex-wrap:wrap; gap:4px; align-items:center;">'
+                    '<span style="font-weight:700; text-transform:uppercase; letter-spacing:.06em; '
+                    'font-size:10px; color:#94a3b8; margin-right:4px;">Read the source</span>'
+                    f'<a href="{link["url"]}" target="_blank" rel="noopener" '
+                    f'style="color:#2563eb; text-decoration:none; font-weight:500;">&#128279;&nbsp;{label_esc}</a>'
+                    '</div>'
+                )
+            else:
+                source_link_block = ""
             parts.append(SIGNAL_ROW.format(
                 color=style["color"],
                 bg=style["bg"],
@@ -605,6 +652,7 @@ def render_signals(signals: list[dict]) -> str:
                 source_agent=html_escape(sig.get("SOURCE_AGENT", "unspecified")),
                 summary=html_escape(sig.get("SUMMARY", "")),
                 implications=html_escape(sig.get("IMPLICATIONS", "")),
+                source_link_block=source_link_block,
             ))
         parts.append("</tbody></table>")
 
@@ -761,7 +809,7 @@ def generate_newsletter_html(signals: list[dict], exec_summary: str, top_risk: s
         truncation_html=truncation_html,
         exec_summary=html_escape(exec_summary) or "No summary available.",
         top_risk=html_escape(top_risk) or "No particular risk identified.",
-        signals_html=render_signals(signals),
+        signals_html=render_signals(signals, all_links),
         link_appendix_html=render_link_appendix(all_links),
         agent_names=agent_names or "no agents configured yet",
     )
