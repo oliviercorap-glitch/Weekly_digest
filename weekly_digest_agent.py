@@ -483,24 +483,32 @@ TITLE: <short, clear title in English>
 IMPACT: <CRITICAL|IMPORTANT|WATCH|INFO>
 CATEGORY: <Competitive Intelligence|China Macro|APAC Macro|APAC Market|Tax & Legal|FX & Treasury|Cross-cutting|Other>
 SUMMARY: <2-4 factual sentences in English>
-IMPLICATIONS: <concrete implication for TLD Group's APAC finance leadership, in English>
+IMPLICATIONS: <what TLD Group should do about this, in English -- phrase it as company action ("TLD should...", "TLD needs to...", "TLD's regional teams should..."), not as a personal instruction to the CFO ("the CFO should..."). Be concrete and specific (which team, which market, what decision), not generic.>
 SOURCE_AGENT: <which agent report(s) this came from>
 SOURCE_INDEX: <the single integer number from the "AVAILABLE SOURCE ARTICLES" list above that this exact signal is based on. If this signal synthesizes multiple reports, pick the one article number most directly relevant to the HEADLINE of this specific signal. If truly no article above corresponds to this signal, leave this field EMPTY rather than guessing.>
 ===SIGNAL_END===
 
-If the APAC FX Risk Watch report (or any other report) mentions a SPECIFIC
-percentage move for a currency this week (e.g. "JPY weakened 1.8% vs EUR",
-"CNY depreciated 0.6%"), ALSO output one FX snapshot block per currency,
-in addition to the signal blocks above:
+MANDATORY FX EXTRACTION STEP -- do this for every currency mentioned with a
+number, even in passing: scan the APAC FX Risk Watch report AND every other
+report for ANY currency percentage move this week (e.g. "JPY weakened 1.8%
+vs EUR", "CNY depreciated 0.6%", "both down ~0.3% weekly"). Approximate
+figures explicitly given in the source reports (e.g. "~0.3%", "about 2%")
+DO count and MUST be captured -- "never estimate or invent" means never make
+up a number that wasn't in the source text, it does NOT mean you should skip
+an approximate figure the source itself reported. For EACH such currency,
+output one FX snapshot block, in addition to (not instead of) any narrative
+mention of it in TOP_RISK or the executive summary:
 
 ===FX_START===
 CURRENCY: <3-letter ISO code, e.g. JPY, KRW, CNY, THB, VND, INR, AUD>
-CHANGE_PCT: <signed number only, no % sign -- e.g. -1.8 or 0.6. Negative = currency weakened/depreciated vs EUR or USD this week (use whichever base the source report used); positive = strengthened/appreciated.>
+CHANGE_PCT: <signed number only, no % sign -- e.g. -1.8 or 0.6 or -0.3. Negative = currency weakened/depreciated vs EUR or USD this week (use whichever base the source report used); positive = strengthened/appreciated.>
 ===FX_END===
 
-Only include a currency if a specific numeric percentage move was stated
-in the source reports -- never estimate or invent a number. If no report
-gives specific FX percentage moves this week, omit FX blocks entirely.
+Self-check before finalizing your response: if TOP_RISK or the executive
+summary mentions a currency by name alongside a percentage, there MUST be a
+matching FX_START block for that currency -- a number should never exist
+only in prose. Only skip FX blocks entirely if truly no report gives any
+currency percentage move this week.
 
 Impact scale:
 - CRITICAL: requires the CFO's attention this week, binding deadline, or material financial/legal exposure.
@@ -515,8 +523,9 @@ in seconds rather than parse one dense block:
     this week and why it matters right now.
   - Paragraph 2 (2-3 sentences): the next most important developments —
     competitive, macro, or FX — grouped logically, not just concatenated.
-  - Paragraph 3 (1-2 sentences): the net picture and what it means for TLD's
-    APAC finance leadership going into next week.
+  - Paragraph 3 (1-2 sentences): the net picture and what TLD should do about
+    it going into next week -- phrase this as company action ("TLD should...",
+    "TLD needs to..."), not as a personal instruction to the CFO.
 Each paragraph must be genuinely short (max ~3 sentences). Do not write a
 single 5-8 sentence wall of text -- that defeats the purpose of splitting
 into paragraphs.
@@ -531,11 +540,19 @@ into paragraphs.
 Then EXACTLY one top risks block:
 ===TOP_RISK_START===
 <3-5 sentences identifying the 1-3 most important things to watch going into next week,
-across all domains (competitive, macro, tax/legal, FX)>
+across all domains (competitive, macro, tax/legal, FX). Where a specific response is
+warranted, phrase it as what TLD should do ("TLD should review...", "TLD's regional
+team should assess..."), not as a personal instruction to the CFO.>
 ===TOP_RISK_END===
 
 If the raw content contains nothing significant, say so plainly in EXEC_SUMMARY and
-TOP_RISK and produce no SIGNAL blocks."""
+TOP_RISK and produce no SIGNAL blocks.
+
+WORDING RULE THROUGHOUT (IMPLICATIONS, executive summary, top risks): always frame
+recommended responses as company-level action ("TLD should...", "TLD needs to...",
+"TLD's [team/entity] should..."). Never phrase them as a personal directive to an
+individual ("the CFO should...", "the CFO needs to..."). The CFO is the reader of
+this newsletter, not the subject of its recommendations."""
 
 
 def parse_fx_data(raw_text: str) -> list[dict]:
@@ -1163,6 +1180,21 @@ def main():
 
     signals, exec_summary, top_risk, truncated, fx_data = analyze_weekly_reports(digests, numbered_links)
     signals = resolve_signal_source_index(signals, numbered_links)
+
+    if not fx_data:
+        prose_to_check = f"{exec_summary}\n{top_risk}"
+        mentions_currency_and_pct = bool(
+            re.search(r"\b(JPY|KRW|CNY|CNH|THB|VND|INR|AUD|NZD|SGD|MYR|IDR|PHP|TWD|HKD)\b", prose_to_check)
+            and "%" in prose_to_check
+        )
+        if mentions_currency_and_pct:
+            logger.warning(
+                "No structured FX data extracted, but the exec summary / top "
+                "risk text mentions a currency alongside a percentage -- "
+                "DeepSeek likely narrated an FX move without emitting the "
+                "matching FX_START block this week. The FX chart will be "
+                "omitted this run; no action needed unless this recurs often."
+            )
 
     fx_chart_png = generate_fx_chart_png(fx_data)
     if fx_data and not fx_chart_png:
