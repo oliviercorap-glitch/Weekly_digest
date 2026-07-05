@@ -4,10 +4,10 @@ weekly_digest_agent.py
 ========================
 Weekly intelligence digest: consolidates the HTML reports produced by
 TLD Group's other watch agents (GSE competitive intelligence, China economic
-watch, APAC GSE watch, China tax & corporate law watch, APAC FX risk watch),
-re-analyzes them together with DeepSeek, and emails a single newsletter every
-Monday morning -- so there is no more need to open GitHub Actions manually
-and download HTML files one by one.
+watch, APAC economic watch, APAC GSE watch, China tax & corporate law watch,
+APAC FX risk watch), re-analyzes them together with DeepSeek, and emails a
+single newsletter every Monday morning -- so there is no more need to open
+GitHub Actions manually and download HTML files one by one.
 
 Architecture
 ------------
@@ -121,6 +121,11 @@ DEFAULT_SOURCE_REPOS = [
     {
         "name": "China Economic Watch",
         "repo": "oliviercorap-glitch/China_eco_agent",
+        "reports_path": "reports",
+    },
+    {
+        "name": "APAC Economic Watch (ex-Mainland China)",
+        "repo": "oliviercorap-glitch/apac_eco_agent",
         "reports_path": "reports",
     },
     {
@@ -397,8 +402,9 @@ def build_consolidation_prompt(digests: list[dict]) -> str:
 
     return f"""You are the Chief Intelligence Editor for {ORG_NAME} ({ORG_CONTEXT}).
 Each week you receive the raw text extracted from several independent watch-agent
-reports (competitive intelligence, China macroeconomic watch, APAC GSE market watch,
-China tax & corporate law watch, APAC FX risk watch). Your job is to consolidate
+reports (competitive intelligence, China macroeconomic watch, APAC macroeconomic
+watch, APAC GSE market watch, China tax & corporate law watch, APAC FX risk
+watch). Your job is to consolidate
 them into ONE clean weekly newsletter for the CFO -- not to just concatenate them.
 
 RAW EXTRACTED REPORT CONTENT FOR THIS WEEK:
@@ -420,7 +426,7 @@ For each significant item, produce a block in the EXACT following format
 ===SIGNAL_START===
 TITLE: <short, clear title in English>
 IMPACT: <CRITICAL|IMPORTANT|WATCH|INFO>
-CATEGORY: <Competitive Intelligence|China Macro|APAC Market|Tax & Legal|FX & Treasury|Cross-cutting|Other>
+CATEGORY: <Competitive Intelligence|China Macro|APAC Macro|APAC Market|Tax & Legal|FX & Treasury|Cross-cutting|Other>
 SUMMARY: <2-4 factual sentences in English>
 IMPLICATIONS: <concrete implication for TLD Group's APAC finance leadership, in English>
 SOURCE_AGENT: <which agent report(s) this came from>
@@ -505,10 +511,21 @@ def analyze_weekly_reports(digests: list[dict]):
 
 IMPACT_ORDER = ["CRITICAL", "IMPORTANT", "WATCH", "INFO"]
 IMPACT_STYLE = {
-    "CRITICAL": {"color": "#b91c1c", "bg": "#fee2e2", "label": "CRITICAL"},
-    "IMPORTANT": {"color": "#c2410c", "bg": "#ffedd5", "label": "IMPORTANT"},
-    "WATCH": {"color": "#a16207", "bg": "#fef9c3", "label": "WATCH"},
-    "INFO": {"color": "#1d4ed8", "bg": "#dbeafe", "label": "INFO"},
+    "CRITICAL":  {"color": "#dc2626", "bg": "#fef2f2", "border": "#fecaca", "text": "#991b1b", "label": "Critical",  "icon": "🔴"},
+    "IMPORTANT": {"color": "#d97706", "bg": "#fffbeb", "border": "#fde68a", "text": "#92400e", "label": "Important", "icon": "🟠"},
+    "WATCH":     {"color": "#0369a1", "bg": "#f0f9ff", "border": "#bae6fd", "text": "#0c4a6e", "label": "Watch",     "icon": "🔵"},
+    "INFO":      {"color": "#6b7280", "bg": "#f9fafb", "border": "#e5e7eb", "text": "#374151", "label": "Info",     "icon": "⚪"},
+}
+
+CATEGORY_ICON = {
+    "Competitive Intelligence": "📡",
+    "China Macro":              "🇨🇳",
+    "APAC Macro":               "🌏",
+    "APAC Market":              "🛬",
+    "Tax & Legal":              "⚖️",
+    "FX & Treasury":            "💱",
+    "Cross-cutting":            "🔗",
+    "Other":                    "📌",
 }
 
 
@@ -520,22 +537,38 @@ def html_escape(text: str) -> str:
 
 SIGNAL_ROW = """
 <tr>
-  <td style="padding:14px 18px; border-left:5px solid {color}; background:{bg}22; border-radius:6px; display:block; margin-bottom:14px;">
-    <span style="display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:600; background:{bg}; color:{color};">{impact_label}</span>
-    <span style="display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:600; background:#e5e7eb; color:#374151; margin-left:6px;">{category}</span>
-    <h3 style="margin:10px 0 6px 0; font-size:16px; color:#111827;">{title}</h3>
-    <div style="font-size:12px; color:#6b7280; margin-bottom:8px;">Source: {source_agent}</div>
-    <p style="margin:6px 0; font-size:14px; line-height:1.5; color:#111827;">{summary}</p>
-    <p style="margin:6px 0; font-size:14px; line-height:1.5; color:#111827;"><strong>Implication:</strong> {implications}</p>
+  <td style="padding:0 0 14px 0;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+           style="background:#ffffff; border:1px solid #e5e7eb; border-left:4px solid {color}; border-radius:10px; box-shadow:0 1px 2px rgba(16,24,40,.04);">
+      <tr>
+        <td style="padding:16px 20px 14px 18px;">
+          <span style="display:inline-block; padding:3px 11px; border-radius:999px; font-size:11px; font-weight:700; letter-spacing:.02em; background:{bg}; color:{text}; border:1px solid {border}; margin-right:6px;">{impact_icon} {impact_label}</span>
+          <span style="display:inline-block; padding:3px 11px; border-radius:999px; font-size:11px; font-weight:600; background:#f1f5f9; color:#475569; margin-right:6px;">{category_icon} {category}</span>
+          <h3 style="margin:12px 0 6px 0; font-size:16px; line-height:1.4; color:#0f172a; font-weight:600;">{title}</h3>
+          <div style="font-size:11px; color:#94a3b8; text-transform:uppercase; letter-spacing:.05em; font-weight:600; margin-bottom:10px;">Source &middot; {source_agent}</div>
+          <p style="margin:0 0 10px 0; font-size:14px; line-height:1.65; color:#334155;">{summary}</p>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc; border-radius:8px; border:1px solid #e2e8f0;">
+            <tr>
+              <td style="padding:10px 14px;">
+                <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:#94a3b8; margin-bottom:3px;">Implication for TLD</div>
+                <div style="font-size:14px; line-height:1.6; color:#0f172a; font-weight:500;">{implications}</div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
   </td>
 </tr>
 """
 
 LINK_APPENDIX_GROUP = """
-<h3 style="font-size:14px; color:#374151; margin:18px 0 8px 0;">{source_name}</h3>
-<ul style="margin:0 0 8px 0; padding-left:18px; font-size:13px; color:#1d4ed8;">
-  {items}
-</ul>
+<div style="margin-bottom:14px;">
+  <h3 style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:#64748b; margin:0 0 8px 0; padding-bottom:6px; border-bottom:1px solid #e2e8f0;">{source_name}</h3>
+  <ul style="margin:0; padding-left:18px; font-size:13px; color:#2563eb; line-height:1.9;">
+    {items}
+  </ul>
+</div>
 """
 
 
@@ -550,14 +583,24 @@ def render_signals(signals: list[dict]) -> str:
         if not items:
             continue
         style = IMPACT_STYLE[impact]
-        parts.append(f'<h2 style="font-size:15px; text-transform:uppercase; letter-spacing:.04em; color:#374151; margin:24px 0 10px 0;">{style["label"]} ({len(items)})</h2>')
+        parts.append(
+            f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:22px 0 10px 0;">'
+            f'<tr><td style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:#64748b;">'
+            f'{style["icon"]} {style["label"]} &middot; {len(items)}'
+            f'</td></tr></table>'
+        )
         parts.append('<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tbody>')
         for sig in items:
+            category = sig.get("CATEGORY", "Other")
             parts.append(SIGNAL_ROW.format(
                 color=style["color"],
                 bg=style["bg"],
+                border=style["border"],
+                text=style["text"],
+                impact_icon=style["icon"],
                 impact_label=style["label"],
-                category=html_escape(sig.get("CATEGORY", "Other")),
+                category_icon=CATEGORY_ICON.get(category, "📌"),
+                category=html_escape(category),
                 title=html_escape(sig.get("TITLE", "")),
                 source_agent=html_escape(sig.get("SOURCE_AGENT", "unspecified")),
                 summary=html_escape(sig.get("SUMMARY", "")),
@@ -566,7 +609,10 @@ def render_signals(signals: list[dict]) -> str:
         parts.append("</tbody></table>")
 
     if not parts:
-        parts.append('<p style="font-size:14px; color:#374151;">No significant signal detected this week.</p>')
+        parts.append(
+            '<p style="font-size:14px; color:#64748b; font-style:italic; padding:12px 0;">'
+            "No significant signal detected this week.</p>"
+        )
     return "\n".join(parts)
 
 
@@ -586,7 +632,7 @@ def render_link_appendix(all_links: list[dict]) -> str:
     groups = []
     for source_name, links in by_source.items():
         items_html = "\n".join(
-            f'<li style="margin-bottom:4px;"><a href="{l["url"]}" style="color:#1d4ed8; text-decoration:none;" target="_blank" rel="noopener">{html_escape(l["label"])[:140]}</a></li>'
+            f'<li style="margin-bottom:4px;"><a href="{l["url"]}" style="color:#2563eb; text-decoration:none;" target="_blank" rel="noopener">{html_escape(l["label"])[:140]}</a></li>'
             for l in links[:40]
         )
         groups.append(LINK_APPENDIX_GROUP.format(source_name=html_escape(source_name), items=items_html))
@@ -595,43 +641,78 @@ def render_link_appendix(all_links: list[dict]) -> str:
 
 NEWSLETTER_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="utf-8"><title>Weekly Intelligence Digest - {run_date}</title></head>
-<body style="margin:0; padding:0; background:#f3f4f6; font-family:-apple-system,Segoe UI,Arial,sans-serif; color:#111827;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f4f6;">
-<tr><td align="center">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Weekly Intelligence Digest - {run_date}</title>
+<!--[if mso]>
+<style>table {{border-collapse:collapse;}}</style>
+<![endif]-->
+</head>
+<body style="margin:0; padding:0; background:#eef1f6; font-family:'Segoe UI',-apple-system,Helvetica,Arial,sans-serif; color:#0f172a;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eef1f6;">
+<tr><td align="center" style="padding:28px 12px;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:900px;">
 
-<tr><td style="background:#111827; color:#ffffff; padding:28px 24px; border-radius:10px 10px 0 0;">
-  <h1 style="margin:0 0 6px 0; font-size:22px;">Weekly Intelligence Digest</h1>
-  <p style="margin:0; color:#d1d5db; font-size:14px;">{org_name} - {org_context}</p>
-  <p style="margin:0; color:#d1d5db; font-size:14px;">Week of {run_date} &middot; {nb_reports} source report(s) consolidated</p>
+<!-- MASTHEAD -->
+<tr><td style="background:#0f172a; padding:32px 32px 26px 32px; border-radius:14px 14px 0 0;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+    <tr><td>
+      <div style="font-family:Consolas,'Courier New',monospace; font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:#64748b; margin-bottom:10px;">{org_name} &middot; {org_context}</div>
+      <div style="font-size:25px; font-weight:700; letter-spacing:-.01em; color:#ffffff; margin-bottom:6px;">Weekly Intelligence Digest</div>
+      <div style="font-size:14px; color:#94a3b8; margin-bottom:18px;">Week of {run_date} &middot; {nb_reports} source report(s) consolidated across {nb_agents} watch agents</div>
+    </td></tr>
+    <tr><td style="border-top:1px solid #1e293b; padding-top:16px;">
+      {counter_pills}
+    </td></tr>
+  </table>
 </td></tr>
 
-<tr><td style="padding:8px 0;">{truncation_html}</td></tr>
+<tr><td style="padding:0;">{truncation_html}</td></tr>
 
-<tr><td style="background:#ffffff; padding:20px; border-radius:10px; margin-bottom:18px; display:block;">
-  <h2 style="font-size:15px; text-transform:uppercase; letter-spacing:.04em; color:#374151; margin-top:0;">Week in review</h2>
-  <p style="font-size:14px; line-height:1.6;">{exec_summary}</p>
+<!-- EXEC SUMMARY -->
+<tr><td style="background:#ffffff; padding:0 32px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:22px;">
+    <tr><td style="background:#0f172a; border-radius:12px; padding:22px 26px;">
+      <div style="font-family:Consolas,'Courier New',monospace; font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:#64748b; margin-bottom:10px;">Week in review</div>
+      <p style="margin:0; font-size:14.5px; line-height:1.75; color:#e2e8f0;">{exec_summary}</p>
+    </td></tr>
+  </table>
 </td></tr>
 
-<tr><td style="height:16px;"></td></tr>
-
-<tr><td style="background:#fff7ed; border:1px solid #fdba74; border-radius:10px; padding:18px; display:block;">
-  <h2 style="font-size:15px; text-transform:uppercase; letter-spacing:.04em; color:#374151; margin-top:0;">Top risks to watch this week</h2>
-  <p style="font-size:14px; line-height:1.6;">{top_risk}</p>
+<!-- TOP RISKS -->
+<tr><td style="background:#ffffff; padding:16px 32px 0 32px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+    <tr><td style="background:#fffbeb; border:1px solid #fde68a; border-radius:12px; padding:18px 22px;">
+      <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:#92400e; margin-bottom:8px;">&#9888;&nbsp; Top risks to watch this week</div>
+      <p style="margin:0; font-size:14px; line-height:1.7; color:#78350f;">{top_risk}</p>
+    </td></tr>
+  </table>
 </td></tr>
 
-<tr><td style="height:16px;"></td></tr>
-
-<tr><td>{signals_html}</td></tr>
-
-<tr><td style="background:#ffffff; padding:20px; border-radius:10px; margin-top:18px; display:block;">
-  <h2 style="font-size:15px; text-transform:uppercase; letter-spacing:.04em; color:#374151; margin-top:0;">Appendix: all source links this week</h2>
-  {link_appendix_html}
+<!-- SIGNALS -->
+<tr><td style="background:#ffffff; padding:26px 32px 6px 32px;">
+  <div style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.08em; color:#94a3b8; padding-bottom:10px; margin-bottom:6px; border-bottom:1px solid #e2e8f0;">Signals this week</div>
+  {signals_html}
 </td></tr>
 
-<tr><td style="padding:16px 4px; font-size:12px; color:#9ca3af;">
-  Automatically generated by weekly_digest_agent.py &middot; consolidating: {agent_names}
+<!-- APPENDIX -->
+<tr><td style="background:#ffffff; padding:8px 32px 28px 32px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+    <tr><td style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:12px; padding:20px 22px;">
+      <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:#94a3b8; margin-bottom:12px;">Appendix &middot; all source links this week</div>
+      {link_appendix_html}
+    </td></tr>
+  </table>
+</td></tr>
+
+<!-- FOOTER -->
+<tr><td style="background:#ffffff; border-radius:0 0 14px 14px; padding:0 32px 26px 32px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+    <tr><td style="border-top:1px solid #e2e8f0; padding-top:16px; font-size:11px; color:#94a3b8; font-family:Consolas,'Courier New',monospace; letter-spacing:.02em;">
+      Automatically generated by weekly_digest_agent.py &middot; consolidating: {agent_names}
+    </td></tr>
+  </table>
 </td></tr>
 
 </table>
@@ -646,19 +727,37 @@ def generate_newsletter_html(signals: list[dict], exec_summary: str, top_risk: s
     truncation_html = ""
     if truncated:
         truncation_html = (
-            '<div style="background:#fee2e2; color:#991b1b; padding:10px 16px; '
-            'border-radius:8px; font-size:13px;">Warning: the AI consolidation response '
-            "appears to have been truncated. Some signals may be incomplete -- check the "
-            "appendix below for the full list of source links.</div>"
+            '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff; padding:16px 32px 0 32px;">'
+            '<tr><td style="background:#fef2f2; border:1px solid #fecaca; border-radius:10px; padding:12px 18px; font-size:13px; color:#991b1b;">'
+            "&#9888;&nbsp; Warning: the AI consolidation response appears to have been truncated. "
+            "Some signals may be incomplete -- check the appendix below for the full list of "
+            "source links."
+            "</td></tr></table>"
         )
 
-    agent_names = ", ".join(s["name"] for s in SOURCE_REPOS if "<owner>" not in s["repo"])
+    active_repos = [s for s in SOURCE_REPOS if "<owner>" not in s["repo"]]
+    agent_names = ", ".join(s["name"] for s in active_repos)
+
+    counts = {impact: 0 for impact in IMPACT_ORDER}
+    for sig in signals:
+        counts[sig.get("IMPACT", "INFO")] = counts.get(sig.get("IMPACT", "INFO"), 0) + 1
+
+    counter_pills = "".join(
+        f'<span style="display:inline-block; padding:4px 12px; border-radius:999px; '
+        f'font-size:11px; font-weight:600; background:{IMPACT_STYLE[lvl]["bg"]}; '
+        f'color:{IMPACT_STYLE[lvl]["text"]}; border:1px solid {IMPACT_STYLE[lvl]["border"]}; '
+        f'margin-right:8px;">{IMPACT_STYLE[lvl]["icon"]} {counts[lvl]} {IMPACT_STYLE[lvl]["label"]}</span>'
+        for lvl in IMPACT_ORDER
+        if counts[lvl] > 0
+    ) or '<span style="font-size:12px; color:#64748b;">No signals to report this week</span>'
 
     return NEWSLETTER_TEMPLATE.format(
         run_date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         org_name=ORG_NAME,
         org_context=ORG_CONTEXT,
         nb_reports=nb_reports,
+        nb_agents=len(active_repos) or len(SOURCE_REPOS),
+        counter_pills=counter_pills,
         truncation_html=truncation_html,
         exec_summary=html_escape(exec_summary) or "No summary available.",
         top_risk=html_escape(top_risk) or "No particular risk identified.",
