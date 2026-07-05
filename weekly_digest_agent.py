@@ -335,6 +335,7 @@ def collect_weekly_reports() -> tuple[list[dict], list[dict]]:
                 "source_name": name,
                 "file_name": f["name"],
                 "text": extracted["text"][:6000],  # cap per-file size to control token budget
+                "links": extracted["links"][:30],  # cap link list sent to DeepSeek per report
             })
             all_links.extend(extracted["links"])
             logger.info("Collected %s from %s (%d chars, %d links)", f["name"], repo, len(extracted["text"]), len(extracted["links"]))
@@ -387,7 +388,7 @@ SIGNAL_BLOCK_RE = re.compile(r"===SIGNAL_START===(.*?)===SIGNAL_END===", re.DOTA
 EXEC_SUMMARY_RE = re.compile(r"===EXEC_SUMMARY_START===(.*?)===EXEC_SUMMARY_END===", re.DOTALL)
 TOP_RISK_RE = re.compile(r"===TOP_RISK_START===(.*?)===TOP_RISK_END===", re.DOTALL)
 
-SIGNAL_FIELD_RE = re.compile(r"^(TITLE|IMPACT|CATEGORY|SUMMARY|IMPLICATIONS|SOURCE_AGENT):\s*(.*)$")
+SIGNAL_FIELD_RE = re.compile(r"^(TITLE|IMPACT|CATEGORY|SUMMARY|IMPLICATIONS|SOURCE_AGENT|SOURCE_URL):\s*(.*)$")
 
 VALID_IMPACTS = {"CRITICAL", "IMPORTANT", "WATCH", "INFO"}
 
@@ -397,7 +398,12 @@ def build_consolidation_prompt(digests: list[dict]) -> str:
         return ""
     blocks = []
     for i, d in enumerate(digests, start=1):
-        blocks.append(f"[Report {i} - Agent: {d['source_name']} - File: {d['file_name']}]\n{d['text']}\n")
+        links_list = "\n".join(
+            f"    - {l['label'][:120]} => {l['url']}"
+            for l in d.get("links", [])
+        )
+        links_section = f"\n[Report {i} available source links]\n{links_list}\n" if links_list else ""
+        blocks.append(f"[Report {i} - Agent: {d['source_name']} - File: {d['file_name']}]\n{d['text']}\n{links_section}")
     reports_text = "\n".join(blocks)
 
     return f"""You are the Chief Intelligence Editor for {ORG_NAME} ({ORG_CONTEXT}).
@@ -419,6 +425,9 @@ INSTRUCTIONS:
    PBOC move noted in the FX report that also explains a trend in the China
    economic report), call that out explicitly.
 3. Ignore items that are purely routine/no-action or clearly low-value noise.
+4. For SOURCE_URL, only ever copy a URL character-for-character from the "available
+   source links" lists provided above. Never fabricate, guess, or slightly alter a
+   URL -- an empty SOURCE_URL is always preferable to an incorrect one.
 
 For each significant item, produce a block in the EXACT following format
 (nothing before or after the delimiters):
@@ -430,6 +439,7 @@ CATEGORY: <Competitive Intelligence|China Macro|APAC Macro|APAC Market|Tax & Leg
 SUMMARY: <2-4 factual sentences in English>
 IMPLICATIONS: <concrete implication for TLD Group's APAC finance leadership, in English>
 SOURCE_AGENT: <which agent report(s) this came from>
+SOURCE_URL: <the EXACT url, copied character-for-character from the "available source links" list of the report this signal is based on -- do NOT paraphrase, shorten, or invent a URL. If this signal synthesizes multiple reports, pick the single most directly relevant link. If truly no link in the lists above corresponds to this signal, leave this field EMPTY rather than guessing.>
 ===SIGNAL_END===
 
 Impact scale:
@@ -480,6 +490,36 @@ def parse_signals(raw_text: str) -> tuple[list[dict], str, str, bool]:
         truncation_suspected = True
 
     return signals, exec_summary, top_risk, truncation_suspected
+
+
+def _normalize_url(url: str) -> str:
+    return url.strip().rstrip("/")
+
+
+def validate_signal_urls(signals: list[dict], all_links: list[dict]) -> list[dict]:
+    """Defense against hallucinated/mismatched links: a SOURCE_URL is only ever
+    rendered if it exactly matches (after light normalization) a URL that was
+    actually extracted from one of this week's source reports. Anything else
+    -- fabricated, paraphrased, or simply wrong -- is dropped silently rather
+    than shown to the reader, since a missing link is far less confusing than
+    a wrong one."""
+    known_urls = {_normalize_url(l["url"]) for l in all_links}
+    dropped = 0
+    for sig in signals:
+        raw_url = (sig.get("SOURCE_URL") or "").strip()
+        if raw_url and _normalize_url(raw_url) in known_urls:
+            sig["SOURCE_URL"] = raw_url
+        else:
+            if raw_url:
+                dropped += 1
+                logger.warning(
+                    "Dropping unverifiable SOURCE_URL for signal '%s': %s",
+                    sig.get("TITLE", "?"), raw_url,
+                )
+            sig["SOURCE_URL"] = ""
+    if dropped:
+        logger.warning("%d signal(s) had a SOURCE_URL that didn't match any known link and were cleared", dropped)
+    return signals
 
 
 def analyze_weekly_reports(digests: list[dict]):
@@ -535,36 +575,14 @@ def html_escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def trouver_lien(sig: dict, all_links: list[dict]) -> Optional[dict]:
-    """Find the source link that best matches a consolidated signal, so the
-    reader can click straight through to the original article from within
-    the signal card -- no need to scroll down to the appendix.
-
-    Matching is a simple word-overlap score between the signal's TITLE +
-    SUMMARY and each candidate link's label, restricted to links from the
-    same source agent when SOURCE_AGENT is populated (keeps matches
-    accurate when multiple agents cover a similar topic in the same week).
-    """
-    haystack = (sig.get("TITLE", "") + " " + sig.get("SUMMARY", "")).lower()
-    if not haystack.strip():
-        return None
-
-    source_agent = (sig.get("SOURCE_AGENT") or "").lower()
-    candidates = all_links
-    if source_agent:
-        narrowed = [l for l in all_links if l["source"].lower() in source_agent or source_agent in l["source"].lower()]
-        if narrowed:
-            candidates = narrowed
-
-    best_link, best_score = None, 0
-    for link in candidates:
-        words = [w for w in re.split(r"[\s\W]+", link["label"].lower()) if len(w) >= 4]
-        if not words:
-            continue
-        score = sum(1 for w in words if w in haystack)
-        if score > best_score:
-            best_score, best_link = score, link
-    return best_link if best_score >= 1 else None
+def _build_url_lookup(all_links: list[dict]) -> dict:
+    """Exact (not fuzzy) lookup from normalized URL -> link dict, used only to
+    fetch the display label for a SOURCE_URL that DeepSeek already cited
+    verbatim -- never to guess which link a signal 'probably' refers to."""
+    lookup = {}
+    for l in all_links:
+        lookup.setdefault(_normalize_url(l["url"]), l)
+    return lookup
 
 
 SIGNAL_ROW = """
@@ -610,6 +628,8 @@ def render_signals(signals: list[dict], all_links: list[dict]) -> str:
     for sig in signals:
         grouped.setdefault(sig.get("IMPACT", "INFO"), []).append(sig)
 
+    url_lookup = _build_url_lookup(all_links)
+
     parts = []
     for impact in IMPACT_ORDER:
         items = grouped.get(impact, [])
@@ -625,15 +645,19 @@ def render_signals(signals: list[dict], all_links: list[dict]) -> str:
         parts.append('<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tbody>')
         for sig in items:
             category = sig.get("CATEGORY", "Other")
-            link = trouver_lien(sig, all_links)
-            if link:
-                label_esc = html_escape(link["label"])[:140]
+            # SOURCE_URL was already validated (validate_signal_urls) against the
+            # known set of links extracted from this week's reports -- it is
+            # either an exact, verified match or an empty string. No guessing.
+            source_url = (sig.get("SOURCE_URL") or "").strip()
+            if source_url:
+                matched_link = url_lookup.get(_normalize_url(source_url))
+                label_esc = html_escape(matched_link["label"])[:140] if matched_link else html_escape(source_url)[:80]
                 source_link_block = (
                     '<div style="padding-top:10px; margin-top:10px; border-top:1px dashed #e2e8f0; '
                     'font-size:12px; display:flex; flex-wrap:wrap; gap:4px; align-items:center;">'
                     '<span style="font-weight:700; text-transform:uppercase; letter-spacing:.06em; '
                     'font-size:10px; color:#94a3b8; margin-right:4px;">Read the source</span>'
-                    f'<a href="{link["url"]}" target="_blank" rel="noopener" '
+                    f'<a href="{source_url}" target="_blank" rel="noopener" '
                     f'style="color:#2563eb; text-decoration:none; font-weight:500;">&#128279;&nbsp;{label_esc}</a>'
                     '</div>'
                 )
@@ -872,6 +896,7 @@ def main():
     logger.info("Collected %d report file(s) with %d total source link(s)", len(digests), len(all_links))
 
     signals, exec_summary, top_risk, truncated = analyze_weekly_reports(digests)
+    signals = validate_signal_urls(signals, all_links)
 
     html_newsletter = generate_newsletter_html(
         signals=signals,
