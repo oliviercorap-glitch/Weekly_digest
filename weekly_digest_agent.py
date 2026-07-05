@@ -40,6 +40,7 @@ import base64
 import functools
 import json
 import logging
+import math
 import os
 import random
 import re
@@ -448,10 +449,24 @@ Impact scale:
 - WATCH: weak signal or early-stage development to keep an eye on.
 - INFO: useful context, no action needed.
 
-Then add EXACTLY one "week in review" executive summary block:
+Then add EXACTLY one "week in review" executive summary block. Write it as 3
+SHORT paragraphs, separated by a blank line, so a time-pressed CFO can scan it
+in seconds rather than parse one dense block:
+  - Paragraph 1 (1-2 sentences): the single most urgent/critical development
+    this week and why it matters right now.
+  - Paragraph 2 (2-3 sentences): the next most important developments —
+    competitive, macro, or FX — grouped logically, not just concatenated.
+  - Paragraph 3 (1-2 sentences): the net picture and what it means for TLD's
+    APAC finance leadership going into next week.
+Each paragraph must be genuinely short (max ~3 sentences). Do not write a
+single 5-8 sentence wall of text -- that defeats the purpose of splitting
+into paragraphs.
 ===EXEC_SUMMARY_START===
-<5-8 sentences in English giving a genuine week-in-review across all source reports,
-written for a time-pressed CFO who has not read the underlying reports>
+<paragraph 1>
+
+<paragraph 2>
+
+<paragraph 3>
 ===EXEC_SUMMARY_END===
 
 Then EXACTLY one top risks block:
@@ -573,6 +588,50 @@ def html_escape(text: str) -> str:
     if not text:
         return ""
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _split_into_paragraphs(text: str, target_groups: int = 3) -> list[str]:
+    """Split prose into readable paragraphs.
+
+    Primary path: DeepSeek was asked to separate paragraphs with a blank
+    line -- if present, just use those.
+
+    Fallback: if the model ignored that instruction and returned one dense
+    block (as observed in production), split it into ~target_groups
+    roughly-equal sentence groups instead of showing one unreadable wall of
+    text. A short summary (<=2 sentences) is left as a single paragraph.
+    """
+    if not text or not text.strip():
+        return []
+
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text.strip()) if p.strip()]
+    if len(paragraphs) >= 2:
+        return paragraphs
+
+    sentences = [s for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s]
+    if len(sentences) <= 2:
+        return [text.strip()]
+
+    groups = min(target_groups, len(sentences))
+    size = math.ceil(len(sentences) / groups)
+    chunks = [sentences[i:i + size] for i in range(0, len(sentences), size)]
+    return [" ".join(chunk) for chunk in chunks]
+
+
+def render_prose_paragraphs(text: str, font_size: str, line_height: str, color: str, fallback: str) -> str:
+    """Render prose as properly spaced <p> tags instead of one dense block."""
+    paragraphs = _split_into_paragraphs(text)
+    if not paragraphs:
+        paragraphs = [fallback]
+
+    parts = []
+    for i, p in enumerate(paragraphs):
+        margin = "0 0 12px 0" if i < len(paragraphs) - 1 else "0"
+        parts.append(
+            f'<p style="margin:{margin}; font-size:{font_size}; '
+            f'line-height:{line_height}; color:{color};">{html_escape(p)}</p>'
+        )
+    return "".join(parts)
 
 
 def _build_url_lookup(all_links: list[dict]) -> dict:
@@ -747,7 +806,7 @@ NEWSLETTER_TEMPLATE = """<!DOCTYPE html>
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:22px;">
     <tr><td style="background:#0f172a; border-radius:12px; padding:22px 26px;">
       <div style="font-family:Consolas,'Courier New',monospace; font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:#64748b; margin-bottom:10px;">Week in review</div>
-      <p style="margin:0; font-size:14.5px; line-height:1.75; color:#e2e8f0;">{exec_summary}</p>
+      {exec_summary}
     </td></tr>
   </table>
 </td></tr>
@@ -757,7 +816,7 @@ NEWSLETTER_TEMPLATE = """<!DOCTYPE html>
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
     <tr><td style="background:#fffbeb; border:1px solid #fde68a; border-radius:12px; padding:18px 22px;">
       <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:#92400e; margin-bottom:8px;">&#9888;&nbsp; Top risks to watch this week</div>
-      <p style="margin:0; font-size:14px; line-height:1.7; color:#78350f;">{top_risk}</p>
+      {top_risk}
     </td></tr>
   </table>
 </td></tr>
@@ -831,8 +890,14 @@ def generate_newsletter_html(signals: list[dict], exec_summary: str, top_risk: s
         nb_agents=len(active_repos) or len(SOURCE_REPOS),
         counter_pills=counter_pills,
         truncation_html=truncation_html,
-        exec_summary=html_escape(exec_summary) or "No summary available.",
-        top_risk=html_escape(top_risk) or "No particular risk identified.",
+        exec_summary=render_prose_paragraphs(
+            exec_summary, font_size="14.5px", line_height="1.75",
+            color="#e2e8f0", fallback="No summary available.",
+        ),
+        top_risk=render_prose_paragraphs(
+            top_risk, font_size="14px", line_height="1.7",
+            color="#78350f", fallback="No particular risk identified.",
+        ),
         signals_html=render_signals(signals, all_links),
         link_appendix_html=render_link_appendix(all_links),
         agent_names=agent_names or "no agents configured yet",
